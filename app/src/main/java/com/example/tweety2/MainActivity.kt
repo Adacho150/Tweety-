@@ -26,6 +26,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.MoreVert
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,36 +58,107 @@ class MainActivity : ComponentActivity() {
 }
 
 // Teraz MainScreen przyjmuje navController
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(navController: NavController) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        MapScreen(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = 60.dp) // miejsce na dolny pasek
-        )
+    val showDialog = remember { mutableStateOf(false) }
 
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(60.dp)
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Button(
-                onClick = { navController.navigate("reports") },
-                modifier = Modifier.weight(1f).padding(end = 4.dp)
+    // Przykładowa lista przystanków tramwajowych
+    val tramStops = listOf(
+        "Rondo Kaponiera",
+        "Most Teatralny",
+        "Dworzec Zachodni",
+        "Zawady",
+        "Górczyn",
+        "Os. Lecha",
+        "Pestka - Al. Solidarności"
+    )
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = "Użytkownik",
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("NazwaUżytkownika")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { /* menu użytkownika */ }) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "Opcje użytkownika"
+                        )
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp)
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Zgłoszenia")
+                Button(
+                    onClick = { navController.navigate("reports") },
+                    modifier = Modifier.weight(1f).padding(end = 4.dp)
+                ) {
+                    Text("Zgłoszenia")
+                }
+                Button(
+                    onClick = { /* mapa */ },
+                    modifier = Modifier.weight(1f).padding(start = 4.dp)
+                ) {
+                    Text("Mapa")
+                }
             }
-            Button(
-                onClick = { /* tu możesz później dodać coś */ },
-                modifier = Modifier.weight(1f).padding(start = 4.dp)
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showDialog.value = true },
+                containerColor = MaterialTheme.colorScheme.primary
             ) {
-                Text("Mapa")
+                Icon(Icons.Default.Add, contentDescription = "Dodaj", tint = MaterialTheme.colorScheme.onPrimary)
             }
+        },
+        floatingActionButtonPosition = FabPosition.End
+    ) { padding ->
+        Box(modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)) {
+            MapScreen(modifier = Modifier.fillMaxSize())
+        }
+
+        if (showDialog.value) {
+            AlertDialog(
+                onDismissRequest = { showDialog.value = false },
+                confirmButton = {
+                    TextButton(onClick = { showDialog.value = false }) {
+                        Text("Zamknij")
+                    }
+                },
+                title = { Text("Przystanki tramwajowe w Poznaniu") },
+                text = {
+                    Column {
+                        tramStops.forEach {
+                            Text("• $it", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                    }
+                }
+            )
         }
     }
 }
