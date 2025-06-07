@@ -58,6 +58,11 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.volley)
     implementation(libs.okhttp)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.gson)
+    implementation(libs.okhttp.logging)
+    implementation(libs.coroutines.android)
+    implementation(libs.core.ktx)
 
 
 
