@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -15,6 +16,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ViewModel
@@ -33,7 +36,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            TwojaAplikacjaTheme  {
+            TwojaAplikacjaTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -50,7 +53,9 @@ fun NavigationComponent() {
     val navController = rememberNavController()
     val viewModel: TransportViewModel = viewModel()
 
-    NavHost(navController = navController, startDestination = "map") {
+    NavHost(navController = navController, startDestination = "login") {
+        composable("login") { LoginScreen(navController, viewModel) }
+        composable("register") { RegisterScreen(navController, viewModel) }
         composable("map") { MapScreen(navController, viewModel) }
         composable("tramStops") { TramStopsScreen(navController, viewModel) }
         composable("reportForm/{stopId}/{stopName}") { backStackEntry ->
@@ -71,6 +76,12 @@ class TransportViewModel : ViewModel() {
 
     private var _selectedStop by mutableStateOf<TramStop?>(null)
     val selectedStop: TramStop? get() = _selectedStop
+
+    private var _currentUser by mutableStateOf<User?>(null)
+    val currentUser: User? get() = _currentUser
+
+    private val _registeredUsers = mutableStateListOf<User>()
+    val registeredUsers: List<User> get() = _registeredUsers
 
     init {
         loadSampleStops()
@@ -105,7 +116,31 @@ class TransportViewModel : ViewModel() {
     fun addReport(report: Report) {
         _reports.add(report.copy(id = UUID.randomUUID().toString()))
     }
+
+    fun login(username: String, password: String): Boolean {
+        val user = _registeredUsers.find { it.username == username && it.password == password }
+        _currentUser = user
+        return user != null
+    }
+
+    fun register(email: String, username: String, password: String): Boolean {
+        if (_registeredUsers.any { it.username == username }) {
+            return false
+        }
+        _registeredUsers.add(User(email, username, password))
+        return true
+    }
+
+    fun logout() {
+        _currentUser = null
+    }
 }
+
+data class User(
+    val email: String,
+    val username: String,
+    val password: String
+)
 
 data class TramStop(
     val id: String,
@@ -122,6 +157,172 @@ data class Report(
     val description: String,
     val timestamp: Long = System.currentTimeMillis()
 )
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LoginScreen(navController: NavController, viewModel: TransportViewModel) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showError by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("Logowanie") })
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .padding(32.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (showError) {
+                Text(
+                    text = "Nieprawidłowe dane logowania",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            }
+
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Nazwa użytkownika") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Hasło") },
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = {
+                    if (viewModel.login(username, password)) {
+                        navController.navigate("map")
+                    } else {
+                        showError = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Zaloguj")
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            TextButton(
+                onClick = { navController.navigate("register") },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Nie masz konta? Zarejestruj się")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RegisterScreen(navController: NavController, viewModel: TransportViewModel) {
+    var email by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showError by remember { mutableStateOf(false) }
+    var showSuccess by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Rejestracja") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.Default.ArrowBack, "Wróć")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .padding(32.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (showError) {
+                Text(
+                    text = "Nazwa użytkownika jest już zajęta",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            }
+
+            if (showSuccess) {
+                Text(
+                    text = "Rejestracja udana! Możesz się zalogować",
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            }
+
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text("Email") },
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Nazwa użytkownika") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Hasło") },
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = {
+                    if (viewModel.register(email, username, password)) {
+                        showSuccess = true
+                        showError = false
+                    } else {
+                        showError = true
+                        showSuccess = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Zarejestruj się")
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -152,7 +353,6 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
         mapView.invalidate()
     }
 
-    // Wyświetlanie dialogu po wybraniu przystanku
     viewModel.selectedStop?.let { stop ->
         AlertDialog(
             onDismissRequest = { viewModel.clearSelectedStop() },
@@ -185,7 +385,18 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Mapa Poznania") })
+            TopAppBar(
+                title = { Text("Mapa Poznania") },
+                actions = {
+                    if (viewModel.currentUser != null) {
+                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                    } else {
+                        TextButton(onClick = { navController.navigate("login") }) {
+                            Text("Zaloguj")
+                        }
+                    }
+                }
+            )
         },
         floatingActionButton = {
             FloatingActionButton(
@@ -224,6 +435,15 @@ fun TramStopsScreen(navController: NavController, viewModel: TransportViewModel)
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, "Wróć")
+                    }
+                },
+                actions = {
+                    if (viewModel.currentUser != null) {
+                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                    } else {
+                        TextButton(onClick = { navController.navigate("login") }) {
+                            Text("Zaloguj")
+                        }
                     }
                 }
             )
@@ -280,6 +500,15 @@ fun ReportFormScreen(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, "Wróć")
+                    }
+                },
+                actions = {
+                    if (viewModel.currentUser != null) {
+                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                    } else {
+                        TextButton(onClick = { navController.navigate("login") }) {
+                            Text("Zaloguj")
+                        }
                     }
                 }
             )
@@ -377,6 +606,15 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, "Wróć")
+                    }
+                },
+                actions = {
+                    if (viewModel.currentUser != null) {
+                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                    } else {
+                        TextButton(onClick = { navController.navigate("login") }) {
+                            Text("Zaloguj")
+                        }
                     }
                 }
             )
