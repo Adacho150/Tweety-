@@ -1,6 +1,7 @@
 package com.example.tweety2
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
@@ -11,10 +12,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -27,14 +33,21 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.twojpakiet.app.ui.theme.TwojaAplikacjaTheme
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
+import java.text.SimpleDateFormat
 import java.util.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Configuration.getInstance().userAgentValue = packageName
         setContent {
             TwojaAplikacjaTheme {
                 Surface(
@@ -68,44 +81,137 @@ fun NavigationComponent() {
 }
 
 class TransportViewModel : ViewModel() {
-    private val _stops = mutableStateListOf<TramStop>()
-    val stops: List<TramStop> get() = _stops
-
-    private val _reports = mutableStateListOf<Report>()
-    val reports: List<Report> get() = _reports
-
-    private var _selectedStop by mutableStateOf<TramStop?>(null)
-    val selectedStop: TramStop? get() = _selectedStop
-
     private var _currentUser by mutableStateOf<User?>(null)
     val currentUser: User? get() = _currentUser
 
-    private val _registeredUsers = mutableStateListOf<User>()
-    val registeredUsers: List<User> get() = _registeredUsers
+    private var _authToken by mutableStateOf<String?>(null)
+    val authToken: String? get() = _authToken
+
+    private val _events = mutableStateListOf<Event>()
+    val events: List<Event> get() = _events
+
+    private val _stops = mutableStateListOf<PoznanResponse>()
+    val stops: List<PoznanResponse> get() = _stops
+
+    private var _selectedStop by mutableStateOf<PoznanResponse?>(null)
+    val selectedStop: PoznanResponse? get() = _selectedStop
 
     init {
-        loadSampleStops()
+        loadStopsFromApi()
+        loadEvents()
     }
 
-    private fun loadSampleStops() {
+    private fun loadStopsFromApi() {
         _stops.clear()
-        _stops.addAll(
-            listOf(
-                TramStop("1", "Rondo Kaponiera", 52.4064, 16.9252),
-                TramStop("2", "Most Teatralny", 52.4081, 16.9325),
-                TramStop("3", "Dworzec Zachodni", 52.4025, 16.9138),
-                TramStop("4", "Zawady", 52.4123, 16.9456),
-                TramStop("5", "Górczyn", 52.3987, 16.9012),
-                TramStop("6", "Półwiejska", 52.4095, 16.9231),
-                TramStop("7", "Plac Wielkopolski", 52.4078, 16.9194),
-                TramStop("8", "Garbary", 52.4042, 16.9357),
-                TramStop("9", "Rataje", 52.3976, 16.9532),
-                TramStop("10", "Staroleka", 52.4167, 16.9389)
-            )
-        )
+        RetrofitClient.instance.getStopLocation().enqueue(object : Callback<List<PoznanResponse>> {
+            override fun onResponse(call: Call<List<PoznanResponse>>, response: Response<List<PoznanResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    _stops.addAll(response.body()!!)
+                }
+            }
+
+            override fun onFailure(call: Call<List<PoznanResponse>>, t: Throwable) {
+                // Handle error
+            }
+        })
     }
 
-    fun selectStop(stop: TramStop) {
+    fun hasReportForStop(stopId: String): Boolean {
+        return _events.any { it.stopId == stopId }
+    }
+
+    fun login(usernameOrEmail: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val request = LoginRequest(usernameOrEmail, password)
+        RetrofitClient.instance.login(request).enqueue(object : Callback<LoginResponse> {
+            override fun onResponse(call: Call<LoginResponse>, response: Response<LoginResponse>) {
+                if (response.isSuccessful) {
+                    response.body()?.let {
+                        _authToken = "Bearer ${it.token}"
+                        _currentUser = it.user
+                        loadEvents()
+                        onSuccess()
+                    }
+                } else {
+                    onError("Login failed: ${response.message()}")
+                }
+            }
+
+            override fun onFailure(call: Call<LoginResponse>, t: Throwable) {
+                onError("Network error: ${t.message}")
+            }
+        })
+    }
+
+    fun register(username: String, email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val request = RegisterRequest(username, email, password)
+        RetrofitClient.instance.register(request).enqueue(object : Callback<User> {
+            override fun onResponse(call: Call<User>, response: Response<User>) {
+                if (response.isSuccessful) {
+                    onSuccess()
+                } else {
+                    onError("Registration failed: ${response.message()}")
+                }
+            }
+
+            override fun onFailure(call: Call<User>, t: Throwable) {
+                onError("Network error: ${t.message}")
+            }
+        })
+    }
+
+
+    fun logout(navController: NavController) {
+        _authToken?.let { token ->
+            RetrofitClient.instance.logout(token).enqueue(object : Callback<Void> {
+                override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                    _authToken = null
+                    _currentUser = null
+                    navController.navigate("login") {
+                        popUpTo(navController.graph.startDestinationId) {
+                            inclusive = true
+                        }
+                    }
+                }
+
+                override fun onFailure(call: Call<Void>, t: Throwable) {
+                    // Handle error
+                }
+            })
+        }
+    }
+
+    fun addEvent(stopId: String, type: String, description: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        _authToken?.let { token ->
+            val request = EventRequest(stopId, type, description)
+            RetrofitClient.instance.createEvent(token, request).enqueue(object : Callback<EventResponse> {
+                override fun onResponse(call: Call<EventResponse>, response: Response<EventResponse>) {
+                    if (response.isSuccessful) {
+                        response.body()?.let { eventResponse ->
+                            _events.add(Event(
+                                eventResponse.id,
+                                eventResponse.stopId,
+                                stops.find { it.id == eventResponse.stopId }?.stop_name ?: "",
+                                eventResponse.type,
+                                eventResponse.description,
+                                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").parse(eventResponse.timestamp)?.time ?: System.currentTimeMillis(),
+                                eventResponse.likes,
+                                eventResponse.dislikes
+                            ))
+                            onSuccess()
+                        }
+                    } else {
+                        onError("Failed to create event: ${response.message()}")
+                    }
+                }
+
+                override fun onFailure(call: Call<EventResponse>, t: Throwable) {
+                    onError("Network error: ${t.message}")
+                }
+            })
+        } ?: onError("Not authenticated")
+    }
+
+    fun selectStop(stop: PoznanResponse) {
         _selectedStop = stop
     }
 
@@ -113,57 +219,69 @@ class TransportViewModel : ViewModel() {
         _selectedStop = null
     }
 
-    fun addReport(report: Report) {
-        _reports.add(report.copy(id = UUID.randomUUID().toString()))
-    }
+    fun loadEvents() {
+        _authToken?.let { token ->
+            // First fetch stop locations
+            RetrofitClient.instance.getStopLocation().enqueue(object : Callback<List<PoznanResponse>> {
+                override fun onResponse(call: Call<List<PoznanResponse>>, response: Response<List<PoznanResponse>>) {
+                    if (response.isSuccessful) {
+                        val stopLocations = response.body() ?: emptyList()
 
-    fun login(username: String, password: String): Boolean {
-        val user = _registeredUsers.find { it.username == username && it.password == password }
-        _currentUser = user
-        return user != null
-    }
+                        // Then fetch events
+                        RetrofitClient.instance.getEvents().enqueue(object : Callback<GetEventsRequest> {
+                            override fun onResponse(call: Call<GetEventsRequest>, response: Response<GetEventsRequest>) {
+                                if (response.isSuccessful) {
+                                    response.body()?.let { eventsResponse ->
+                                        _events.clear()
 
-    fun register(email: String, username: String, password: String): Boolean {
-        if (_registeredUsers.any { it.username == username }) {
-            return false
+                                        // Map events with stop names
+                                        val eventsWithStopNames = eventsResponse.events.map { eventResponse ->
+                                            val stopInfo = stopLocations.find { it.id == eventResponse.stopId }
+                                            Event(
+                                                id = eventResponse.id,
+                                                stopId = eventResponse.stopId,
+                                                stopName = stopInfo?.stop_name ?: "Unknown Stop",
+                                                type = eventResponse.type,
+                                                description = eventResponse.description,
+                                                timestamp = try {
+                                                    eventResponse.timestamp.toLong()
+                                                } catch (e: NumberFormatException) {
+                                                    System.currentTimeMillis()
+                                                },
+                                                likes = eventResponse.likes,
+                                                dislikes = eventResponse.dislikes
+                                            )
+                                        }
+
+                                        _events.addAll(eventsWithStopNames)
+                                    }
+                                }
+                            }
+
+                            override fun onFailure(call: Call<GetEventsRequest>, t: Throwable) {
+                                // Handle error
+                                t.printStackTrace()
+                            }
+                        })
+                    }
+                }
+
+                override fun onFailure(call: Call<List<PoznanResponse>>, t: Throwable) {
+                    // Handle error
+                    t.printStackTrace()
+                }
+            })
         }
-        _registeredUsers.add(User(email, username, password))
-        return true
-    }
-
-    fun logout() {
-        _currentUser = null
     }
 }
-
-data class User(
-    val email: String,
-    val username: String,
-    val password: String
-)
-
-data class TramStop(
-    val id: String,
-    val name: String,
-    val latitude: Double,
-    val longitude: Double
-)
-
-data class Report(
-    val id: String,
-    val stopId: String,
-    val stopName: String,
-    val type: String,
-    val description: String,
-    val timestamp: Long = System.currentTimeMillis()
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(navController: NavController, viewModel: TransportViewModel) {
-    var username by remember { mutableStateOf("") }
+    var usernameOrEmail by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var showError by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -178,18 +296,18 @@ fun LoginScreen(navController: NavController, viewModel: TransportViewModel) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (showError) {
+            errorMessage?.let {
                 Text(
-                    text = "Nieprawidłowe dane logowania",
+                    text = it,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
             }
 
             OutlinedTextField(
-                value = username,
-                onValueChange = { username = it },
-                label = { Text("Nazwa użytkownika") },
+                value = usernameOrEmail,
+                onValueChange = { usernameOrEmail = it },
+                label = { Text("Nazwa użytkownika lub email") },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -208,15 +326,32 @@ fun LoginScreen(navController: NavController, viewModel: TransportViewModel) {
 
             Button(
                 onClick = {
-                    if (viewModel.login(username, password)) {
-                        navController.navigate("map")
-                    } else {
-                        showError = true
+                    if (usernameOrEmail.isBlank() || password.isBlank()) {
+                        errorMessage = "Wprowadź dane logowania"
+                        return@Button
                     }
+                    isLoading = true
+                    viewModel.login(
+                        usernameOrEmail,
+                        password,
+                        onSuccess = {
+                            isLoading = false
+                            navController.navigate("map")
+                        },
+                        onError = { error ->
+                            isLoading = false
+                            errorMessage = error
+                        }
+                    )
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading
             ) {
-                Text("Zaloguj")
+                if (isLoading) {
+                    CircularProgressIndicator()
+                } else {
+                    Text("Zaloguj")
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -237,8 +372,9 @@ fun RegisterScreen(navController: NavController, viewModel: TransportViewModel) 
     var email by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var showError by remember { mutableStateOf(false) }
-    var showSuccess by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var successMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -260,17 +396,17 @@ fun RegisterScreen(navController: NavController, viewModel: TransportViewModel) 
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (showError) {
+            errorMessage?.let {
                 Text(
-                    text = "Nazwa użytkownika jest już zajęta",
+                    text = it,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
             }
 
-            if (showSuccess) {
+            successMessage?.let {
                 Text(
-                    text = "Rejestracja udana! Możesz się zalogować",
+                    text = it,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
@@ -308,17 +444,35 @@ fun RegisterScreen(navController: NavController, viewModel: TransportViewModel) 
 
             Button(
                 onClick = {
-                    if (viewModel.register(email, username, password)) {
-                        showSuccess = true
-                        showError = false
-                    } else {
-                        showError = true
-                        showSuccess = false
+                    if (email.isBlank() || username.isBlank() || password.isBlank()) {
+                        errorMessage = "Wypełnij wszystkie pola"
+                        return@Button
                     }
+                    isLoading = true
+                    viewModel.register(
+                        username,
+                        email,
+                        password,
+                        onSuccess = {
+                            isLoading = false
+                            successMessage = "Rejestracja udana! Możesz się zalogować"
+                            errorMessage = null
+                        },
+                        onError = { error ->
+                            isLoading = false
+                            errorMessage = error
+                            successMessage = null
+                        }
+                    )
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading
             ) {
-                Text("Zarejestruj się")
+                if (isLoading) {
+                    CircularProgressIndicator()
+                } else {
+                    Text("Zarejestruj się")
+                }
             }
         }
     }
@@ -330,43 +484,73 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
     val context = LocalContext.current
     val mapView = remember {
         MapView(context).apply {
+            setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             controller.setZoom(15.0)
             controller.setCenter(GeoPoint(52.4064, 16.9252))
         }
     }
 
-    LaunchedEffect(Unit) {
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf<String?>(null) } // null = wszystkie, "t" = tramwaje, "a" = autobusy
+
+    LaunchedEffect(viewModel.stops, viewModel.events, filter) {
         mapView.overlays.clear()
         viewModel.stops.forEach { stop ->
-            val marker = Marker(mapView).apply {
-                position = GeoPoint(stop.latitude, stop.longitude)
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                title = stop.name
-                setOnMarkerClickListener { _, _ ->
-                    viewModel.selectStop(stop)
-                    true
+            // Filtrowanie przystanków
+            val isTramStop = stop.headsigns.split(",").any { it.trim().matches(Regex("\\d{1,2}")) }
+            val isBusStop = stop.headsigns.split(",").any { it.trim().matches(Regex("\\d{3}")) }   // Zakładając, że route_type istnieje w PoznanResponse
+
+            if (filter == null ||
+                (filter == "t" && isTramStop) ||
+                (filter == "a" && isBusStop)) {
+
+                val marker = Marker(mapView).apply {
+                    position = GeoPoint(stop.latitude, stop.longitude)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    title = stop.stop_name
+
+                    if (viewModel.hasReportForStop(stop.id)) {
+                        setIcon(context.getDrawable(android.R.drawable.presence_busy))
+                    } else {
+                        setIcon(context.getDrawable(android.R.drawable.presence_online))
+                    }
+
+                    setOnMarkerClickListener { _, _ ->
+                        viewModel.selectStop(stop)
+                        true
+                    }
                 }
+                mapView.overlays.add(marker)
             }
-            mapView.overlays.add(marker)
         }
         mapView.invalidate()
     }
 
+
     viewModel.selectedStop?.let { stop ->
         AlertDialog(
             onDismissRequest = { viewModel.clearSelectedStop() },
-            title = { Text(stop.name) },
+            title = { Text(stop.stop_name) },
             text = {
                 Column {
                     Text("ID: ${stop.id}")
                     Text("Lokalizacja: ${stop.latitude}, ${stop.longitude}")
+                    Text("Strefa: ${stop.zone}")
+                    Text("Kierunek: ${stop.headsigns}")
+                    if (viewModel.hasReportForStop(stop.id)) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Uwaga: Istnieją zgłoszenia dla tego przystanku!",
+                            color = Color.Red
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        navController.navigate("reportForm/${stop.id}/${stop.name}")
+                        navController.navigate("reportForm/${stop.id}/${stop.stop_name}")
                         viewModel.clearSelectedStop()
                     }
                 ) {
@@ -383,13 +567,43 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
         )
     }
 
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("Wylogować się?") },
+            text = { Text("Czy na pewno chcesz się wylogować?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        viewModel.logout(navController)
+                    }
+                ) {
+                    Text("Wyloguj")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showLogoutDialog = false }
+                ) {
+                    Text("Anuluj")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Mapa Poznania") },
                 actions = {
                     if (viewModel.currentUser != null) {
-                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                        Text(
+                            text = viewModel.currentUser?.username ?: "",
+                            modifier = Modifier
+                                .clickable { showLogoutDialog = true }
+                                .padding(end = 8.dp)
+                        )
                     } else {
                         TextButton(onClick = { navController.navigate("login") }) {
                             Text("Zaloguj")
@@ -410,9 +624,39 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
             BottomAppBar {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Button(onClick = { navController.navigate("reports") }) {
+                    // Przyciski filtrowania
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.Start
+                    ) {
+                        // Przycisk tramwajowy
+                        FilterChip(
+                            selected = filter == "t",
+                            onClick = {
+                                filter = if (filter == "t") null else "t"
+                            },
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                            label = { Text("T") }
+                        )
+
+                        // Przycisk autobusowy
+                        FilterChip(
+                            selected = filter == "a",
+                            onClick = {
+                                filter = if (filter == "a") null else "a"
+                            },
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                            label = { Text("A") }
+                        )
+                    }
+
+                    // Przycisk zgłoszeń
+                    Button(
+                        onClick = { navController.navigate("reports") },
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
                         Text("Zgłoszenia")
                     }
                 }
@@ -420,7 +664,10 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            AndroidView(factory = { mapView })
+            AndroidView(
+                factory = { mapView },
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
@@ -428,10 +675,49 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TramStopsScreen(navController: NavController, viewModel: TransportViewModel) {
+    var searchQuery by remember { mutableStateOf("") }
+    var showLogoutDialog by remember { mutableStateOf(false) }
+
+    val filteredStops = remember(viewModel.stops, searchQuery) {
+        if (searchQuery.isBlank()) {
+            viewModel.stops
+        } else {
+            viewModel.stops.filter { stop ->
+                stop.stop_name.contains(searchQuery, ignoreCase = true) ||
+                        stop.id.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("Wylogować się?") },
+            text = { Text("Czy na pewno chcesz się wylogować?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        viewModel.logout(navController)
+                    }
+                ) {
+                    Text("Wyloguj")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showLogoutDialog = false }
+                ) {
+                    Text("Anuluj")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Wybierz przystanek") },
+                title = { Text("Lista przystanków") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, "Wróć")
@@ -439,7 +725,12 @@ fun TramStopsScreen(navController: NavController, viewModel: TransportViewModel)
                 },
                 actions = {
                     if (viewModel.currentUser != null) {
-                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                        Text(
+                            text = viewModel.currentUser?.username ?: "",
+                            modifier = Modifier
+                                .clickable { showLogoutDialog = true }
+                                .padding(end = 8.dp)
+                        )
                     } else {
                         TextButton(onClick = { navController.navigate("login") }) {
                             Text("Zaloguj")
@@ -461,19 +752,68 @@ fun TramStopsScreen(navController: NavController, viewModel: TransportViewModel)
             }
         }
     ) { padding ->
-        LazyColumn(modifier = Modifier.padding(padding)) {
-            items(viewModel.stops) { stop ->
-                Card(
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+        ) {
+            // Search bar
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Szukaj przystanku") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
+            if (filteredStops.isEmpty()) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    onClick = {
-                        navController.navigate("reportForm/${stop.id}/${stop.name}")
-                    }
+                        .fillMaxSize()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(stop.name, style = MaterialTheme.typography.titleMedium)
-                        Text("ID: ${stop.id}", style = MaterialTheme.typography.bodySmall)
+                    if (viewModel.stops.isEmpty()) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text("Ładowanie przystanków...")
+                        }
+                    } else {
+                        Text("Nie znaleziono przystanków")
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                ) {
+                    items(filteredStops) { stop ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            onClick = {
+                                navController.navigate("reportForm/${stop.id}/${stop.stop_name}")
+                            }
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(stop.stop_name, style = MaterialTheme.typography.titleMedium)
+                                Text("ID: ${stop.id}", style = MaterialTheme.typography.bodySmall)
+                                Text("Strefa: ${stop.zone}", style = MaterialTheme.typography.bodySmall)
+                                if (viewModel.hasReportForStop(stop.id)) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "Istnieją zgłoszenia",
+                                        color = Color.Red,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -491,7 +831,35 @@ fun ReportFormScreen(
 ) {
     var selectedOption by remember { mutableStateOf<String?>(null) }
     var description by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
     val options = listOf("Awaria", "Wypadek", "Kontrola biletów")
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("Wylogować się?") },
+            text = { Text("Czy na pewno chcesz się wylogować?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        viewModel.logout(navController)
+                    }
+                ) {
+                    Text("Wyloguj")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showLogoutDialog = false }
+                ) {
+                    Text("Anuluj")
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -504,7 +872,12 @@ fun ReportFormScreen(
                 },
                 actions = {
                     if (viewModel.currentUser != null) {
-                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                        Text(
+                            text = viewModel.currentUser?.username ?: "",
+                            modifier = Modifier
+                                .clickable { showLogoutDialog = true }
+                                .padding(end = 8.dp)
+                        )
                     } else {
                         TextButton(onClick = { navController.navigate("login") }) {
                             Text("Zaloguj")
@@ -533,6 +906,14 @@ fun ReportFormScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            errorMessage?.let {
+                Text(
+                    text = it,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+
             Text("Wybierz typ zgłoszenia:", style = MaterialTheme.typography.titleMedium)
 
             options.forEach { option ->
@@ -572,25 +953,40 @@ fun ReportFormScreen(
 
             Button(
                 onClick = {
-                    if (selectedOption != null && description.isNotBlank()) {
-                        viewModel.addReport(
-                            Report(
-                                id = "",
-                                stopId = stopId,
-                                stopName = stopName,
-                                type = selectedOption!!,
-                                description = description
-                            )
-                        )
-                        navController.popBackStack()
+                    if (selectedOption == null) {
+                        errorMessage = "Wybierz typ zgłoszenia"
+                        return@Button
                     }
+                    if (description.isBlank()) {
+                        errorMessage = "Wprowadź opis"
+                        return@Button
+                    }
+
+                    isLoading = true
+                    viewModel.addEvent(
+                        stopId,
+                        selectedOption!!,
+                        description,
+                        onSuccess = {
+                            isLoading = false
+                            navController.popBackStack()
+                        },
+                        onError = { error ->
+                            isLoading = false
+                            errorMessage = error
+                        }
+                    )
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 16.dp),
-                enabled = selectedOption != null && description.isNotBlank()
+                enabled = !isLoading && selectedOption != null && description.isNotBlank()
             ) {
-                Text("Zatwierdź zgłoszenie")
+                if (isLoading) {
+                    CircularProgressIndicator()
+                } else {
+                    Text("Zatwierdź zgłoszenie")
+                }
             }
         }
     }
@@ -599,6 +995,67 @@ fun ReportFormScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var searchQuery by remember { mutableStateOf("") }
+
+    fun handleReaction(eventId: String, isLike: Boolean, currentReaction: String?) {
+        val token = viewModel.authToken
+        if (token == null) {
+            Toast.makeText(context, "Zaloguj się, aby oceniać zgłoszenia", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if ((currentReaction == "like" && isLike) || (currentReaction == "dislike" && !isLike)) {
+            return
+        }
+
+        val call = if (isLike) {
+            RetrofitClient.instance.likeEvent(token, eventId)
+        } else {
+            RetrofitClient.instance.dislikeEvent(token, eventId)
+        }
+
+        call.enqueue(object : Callback<LikeDislikeResponse> {
+            override fun onResponse(call: Call<LikeDislikeResponse>, response: Response<LikeDislikeResponse>) {
+                if (response.isSuccessful) {
+                    viewModel.loadEvents()
+                } else {
+                    Toast.makeText(context, "Błąd podczas oceniania zgłoszenia", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onFailure(call: Call<LikeDislikeResponse>, t: Throwable) {
+                Toast.makeText(context, "Błąd sieci: ${t.message}", Toast.LENGTH_SHORT).show()
+            }
+        })
+    }
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("Wylogować się?") },
+            text = { Text("Czy na pewno chcesz się wylogować?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        viewModel.logout(navController)
+                    }
+                ) {
+                    Text("Wyloguj")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showLogoutDialog = false }
+                ) {
+                    Text("Anuluj")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -610,7 +1067,12 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                 },
                 actions = {
                     if (viewModel.currentUser != null) {
-                        Text(viewModel.currentUser?.username ?: "", modifier = Modifier.padding(end = 8.dp))
+                        Text(
+                            text = viewModel.currentUser?.username ?: "",
+                            modifier = Modifier
+                                .clickable { showLogoutDialog = true }
+                                .padding(end = 8.dp)
+                        )
                     } else {
                         TextButton(onClick = { navController.navigate("login") }) {
                             Text("Zaloguj")
@@ -632,32 +1094,102 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
             }
         }
     ) { padding ->
-        if (viewModel.reports.isEmpty()) {
-            Box(
+        Column(modifier = Modifier.padding(padding)) {
+            // Pole wyszukiwania pod TopAppBar
+            TextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Brak zgłoszeń")
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                placeholder = { Text("Szukaj po nazwie przystanku") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Szukaj") },
+                singleLine = true
+            )
+
+            val filteredEvents = if (searchQuery.isBlank()) {
+                viewModel.events
+            } else {
+                viewModel.events.filter { event ->
+                    event.stopName.contains(searchQuery, ignoreCase = true)
+                }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .padding(padding)
-                    .fillMaxSize()
-            ) {
-                items(viewModel.reports) { report ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Przystanek: ${report.stopName}", style = MaterialTheme.typography.titleMedium)
-                            Text("Typ: ${report.type}", style = MaterialTheme.typography.bodyLarge)
-                            Text("Opis: ${report.description}", style = MaterialTheme.typography.bodyMedium)
-                            Text("Data: ${Date(report.timestamp)}", style = MaterialTheme.typography.bodySmall)
+
+            if (filteredEvents.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(if (searchQuery.isNotBlank()) "Brak zgłoszeń dla podanej nazwy" else "Brak zgłoszeń")
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                ) {
+                    items(filteredEvents) { event ->
+                        var userReaction by remember { mutableStateOf<String?>(null) }
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("Przystanek: ${event.stopName}", style = MaterialTheme.typography.titleMedium)
+                                Text("Typ: ${event.type}", style = MaterialTheme.typography.bodyLarge)
+                                Text("Opis: ${event.description}", style = MaterialTheme.typography.bodyMedium)
+                                Text("Data: ${Date(event.timestamp)}", style = MaterialTheme.typography.bodySmall)
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        IconButton(
+                                            onClick = {
+                                                handleReaction(event.id, true, userReaction)
+                                                userReaction = if (userReaction == "like") null else "like"
+                                            },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.KeyboardArrowUp,
+                                                contentDescription = "Like",
+                                                tint = if (userReaction == "like") Color.Green else Color.Gray
+                                            )
+                                        }
+                                        Text("${event.likes}")
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        IconButton(
+                                            onClick = {
+                                                handleReaction(event.id, false, userReaction)
+                                                userReaction = if (userReaction == "dislike") null else "dislike"
+                                            },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.KeyboardArrowDown,
+                                                contentDescription = "Dislike",
+                                                tint = if (userReaction == "dislike") Color.Red else Color.Gray
+                                            )
+                                        }
+                                        Text("${event.dislikes}")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
