@@ -998,6 +998,7 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
     var showLogoutDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
+    var showAllReports by remember { mutableStateOf(false) } // Nowy stan do przełączania widoku
 
     fun handleReaction(eventId: String, isLike: Boolean, currentReaction: String?) {
         val token = viewModel.authToken
@@ -1059,7 +1060,7 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Historia zgłoszeń") },
+                title = { Text(if (showAllReports) "Wszystkie zgłoszenia" else "Ostatnie zgłoszenia") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, "Wróć")
@@ -1085,8 +1086,16 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
             BottomAppBar {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
+                    // Przycisk do przełączania widoku
+                    TextButton(
+                        onClick = { showAllReports = !showAllReports },
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    ) {
+                        Text(if (showAllReports) "Pokaż ostatnie 5 minut" else "Pokaż ostatnie 3 dni")
+                    }
+
                     Button(onClick = { navController.navigate("reports") }) {
                         Text("Zgłoszenia")
                     }
@@ -1095,7 +1104,7 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
-            // Pole wyszukiwania pod TopAppBar
+            // Pole wyszukiwania
             TextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -1107,11 +1116,22 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                 singleLine = true
             )
 
-            val filteredEvents = if (searchQuery.isBlank()) {
-                viewModel.events
-            } else {
-                viewModel.events.filter { event ->
-                    event.stopName.contains(searchQuery, ignoreCase = true)
+            val now = System.currentTimeMillis()
+            val filteredEvents = remember(viewModel.events, searchQuery, showAllReports) {
+                val timeFilter = if (showAllReports) {
+                    // Ostatnie 3 dni (72 godziny)
+                    { event: Event -> event.timestamp > now - 72 * 60 * 60 * 1000 }
+                } else {
+                    // Ostatnie 5 minut
+                    { event: Event -> event.timestamp > now - 5 * 60 * 1000 }
+                }
+
+                if (searchQuery.isBlank()) {
+                    viewModel.events.filter(timeFilter)
+                } else {
+                    viewModel.events.filter { event ->
+                        event.stopName.contains(searchQuery, ignoreCase = true) && timeFilter(event)
+                    }
                 }
             }
 
@@ -1122,7 +1142,11 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(if (searchQuery.isNotBlank()) "Brak zgłoszeń dla podanej nazwy" else "Brak zgłoszeń")
+                    Text(
+                        if (searchQuery.isNotBlank()) "Brak zgłoszeń dla podanej nazwy"
+                        else if (showAllReports) "Brak zgłoszeń z ostatnich 3 dni"
+                        else "Brak zgłoszeń z ostatnich 5 minut"
+                    )
                 }
             } else {
                 LazyColumn(
@@ -1141,7 +1165,10 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                                 Text("Przystanek: ${event.stopName}", style = MaterialTheme.typography.titleMedium)
                                 Text("Typ: ${event.type}", style = MaterialTheme.typography.bodyLarge)
                                 Text("Opis: ${event.description}", style = MaterialTheme.typography.bodyMedium)
-                                Text("Data: ${Date(event.timestamp)}", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "Data: ${SimpleDateFormat("HH:mm dd.MM.yyyy").format(Date(event.timestamp))}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
 
                                 Row(
                                     modifier = Modifier
