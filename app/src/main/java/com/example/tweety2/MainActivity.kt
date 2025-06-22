@@ -496,21 +496,26 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
 
     LaunchedEffect(viewModel.stops, viewModel.events, filter) {
         mapView.overlays.clear()
+        val now = System.currentTimeMillis()
         viewModel.stops.forEach { stop ->
             // Filtrowanie przystanków
             val isTramStop = stop.headsigns.split(",").any { it.trim().matches(Regex("\\d{1,2}")) }
-            val isBusStop = stop.headsigns.split(",").any { it.trim().matches(Regex("\\d{3}")) }   // Zakładając, że route_type istnieje w PoznanResponse
+            val isBusStop = stop.headsigns.split(",").any { it.trim().matches(Regex("\\d{3}")) }
 
             if (filter == null ||
                 (filter == "t" && isTramStop) ||
                 (filter == "a" && isBusStop)) {
+
+                val hasRecentReport = viewModel.events.any {
+                    it.stopId == stop.id && (now - it.timestamp) <= 5 * 60 * 1000
+                }
 
                 val marker = Marker(mapView).apply {
                     position = GeoPoint(stop.latitude, stop.longitude)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                     title = stop.stop_name
 
-                    if (viewModel.hasReportForStop(stop.id)) {
+                    if (hasRecentReport) {
                         setIcon(context.getDrawable(android.R.drawable.presence_busy))
                     } else {
                         setIcon(context.getDrawable(android.R.drawable.presence_online))
@@ -526,6 +531,7 @@ fun MapScreen(navController: NavController, viewModel: TransportViewModel) {
         }
         mapView.invalidate()
     }
+
 
 
     viewModel.selectedStop?.let { stop ->
@@ -998,7 +1004,7 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
     var showLogoutDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
-    var showAllReports by remember { mutableStateOf(false) } // Nowy stan do przełączania widoku
+    var showAllReports by remember { mutableStateOf(false) }
 
     fun handleReaction(eventId: String, isLike: Boolean, currentReaction: String?) {
         val token = viewModel.authToken
@@ -1088,7 +1094,6 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Przycisk do przełączania widoku
                     TextButton(
                         onClick = { showAllReports = !showAllReports },
                         modifier = Modifier.padding(horizontal = 8.dp)
@@ -1104,7 +1109,6 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
-            // Pole wyszukiwania
             TextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -1119,20 +1123,20 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
             val now = System.currentTimeMillis()
             val filteredEvents = remember(viewModel.events, searchQuery, showAllReports) {
                 val timeFilter = if (showAllReports) {
-                    // Ostatnie 3 dni (72 godziny)
-                    { event: Event -> event.timestamp > now - 72 * 60 * 60 * 1000 }
+                    { event: Event -> event.timestamp > now - 72 * 60 * 60 * 1000 } // 3 dni
                 } else {
-                    // Ostatnie 5 minut
-                    { event: Event -> event.timestamp > now - 5 * 60 * 1000 }
+                    { event: Event -> event.timestamp > now - 5 * 60 * 1000 } // 5 minut
                 }
 
-                if (searchQuery.isBlank()) {
+                val filtered = if (searchQuery.isBlank()) {
                     viewModel.events.filter(timeFilter)
                 } else {
                     viewModel.events.filter { event ->
                         event.stopName.contains(searchQuery, ignoreCase = true) && timeFilter(event)
                     }
                 }
+
+                filtered.sortedByDescending { it.timestamp } // Sortowanie od najnowszych
             }
 
             if (filteredEvents.isEmpty()) {
@@ -1155,6 +1159,8 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                 ) {
                     items(filteredEvents) { event ->
                         var userReaction by remember { mutableStateOf<String?>(null) }
+                        var likes by remember { mutableStateOf(event.likes) }
+                        var dislikes by remember { mutableStateOf(event.dislikes) }
 
                         Card(
                             modifier = Modifier
@@ -1184,6 +1190,10 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                                             onClick = {
                                                 handleReaction(event.id, true, userReaction)
                                                 userReaction = if (userReaction == "like") null else "like"
+                                                likes = if (userReaction == "like") event.likes + 1 else event.likes
+                                                if (userReaction == "dislike") {
+                                                    dislikes = event.dislikes - 1
+                                                }
                                             },
                                             modifier = Modifier.size(24.dp)
                                         ) {
@@ -1193,7 +1203,7 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                                                 tint = if (userReaction == "like") Color.Green else Color.Gray
                                             )
                                         }
-                                        Text("${event.likes}")
+                                        Text("$likes")
                                     }
 
                                     Row(
@@ -1204,6 +1214,10 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                                             onClick = {
                                                 handleReaction(event.id, false, userReaction)
                                                 userReaction = if (userReaction == "dislike") null else "dislike"
+                                                dislikes = if (userReaction == "dislike") event.dislikes + 1 else event.dislikes
+                                                if (userReaction == "like") {
+                                                    likes = event.likes - 1
+                                                }
                                             },
                                             modifier = Modifier.size(24.dp)
                                         ) {
@@ -1213,7 +1227,7 @@ fun ReportsScreen(navController: NavController, viewModel: TransportViewModel) {
                                                 tint = if (userReaction == "dislike") Color.Red else Color.Gray
                                             )
                                         }
-                                        Text("${event.dislikes}")
+                                        Text("$dislikes")
                                     }
                                 }
                             }
